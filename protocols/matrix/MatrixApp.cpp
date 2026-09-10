@@ -9,7 +9,9 @@
 #include <string>
 
 #include <Catalog.h>
+#include <File.h>
 #include <MessageRunner.h>
+#include <OS.h>
 #include <Roster.h>
 
 #include <ChatProtocolMessages.h>
@@ -26,6 +28,22 @@
 
 std::shared_ptr<mtx::http::Client> client = nullptr;
 MatrixApp* m_app = NULL;
+
+
+// Verbose startup/logging helper for debugging. Chat-O-Matic launches the
+// MatrixApp through the roster, so it has no attached terminal: everything
+// is appended to the log file (plus stderr, when a terminal is present).
+static void
+log_debug(const BString &message)
+{
+	bigtime_t now = system_time();
+
+	BString line;
+	line.SetToFormat("MatrixApp: %11lld %s", now, message.String());
+	line.ReplaceSet("\n", " ");
+	line << "\n";
+	std::cerr << line;
+}
 
 
 int
@@ -47,6 +65,7 @@ MatrixApp::MatrixApp()
 	fConnected(false)
 {
 	new BMessageRunner(this, new BMessage(CHECK_APP), 10000000, -1);
+	log_debug("MatrixApp started.");
 }
 
 
@@ -66,11 +85,22 @@ MatrixApp::MessageReceived(BMessage* msg)
 			fServer = msg->FindString("server");
 			fPassword = msg->FindString("password");
 
+			BString regInfo;
+			regInfo << "Registration message: thread_id=" << thread_id
+				<< " user='" << fUser.String() << "' server='"
+				<< fServer.String() << "' session='" << fSession.String() << "'";
+			log_debug(regInfo.String());
+
 			app_info info;
 			GetAppInfo(&info);
 			BMessage registerApp(MATRIX_ACCOUNT_REGISTERED);
 			registerApp.AddInt64("team_id", info.team);
 			SendMessage(registerApp);
+
+			BString teamInfo;
+			teamInfo << "Registering with Chat-O-Matic (team_id="
+				<< (int32)info.team << ").";
+			log_debug(teamInfo.String());
 
 			Connect();
 			break;
@@ -170,11 +200,18 @@ MatrixApp::Connect()
 		client = std::make_shared<mtx::http::Client>(fServer.String());
 	}
 	catch (std::exception &e) {
+		BString errLog;
+		errLog << "Failed to initialize Matrix client: " << e.what();
+		log_debug(errLog.String());
 		SendError("Unable to initialize Matrix client.", {}, true);
 		return;
 	}
 
 	client->set_device_id(fSession.String());
+
+	BString conn;
+	conn << "Connecting to homeserver '" << fServer.String() << "' …";
+	log_debug(conn.String());
 
 	BMessage progress(IM_MESSAGE);
 	progress.AddInt32("im_what", IM_PROGRESS);
@@ -185,12 +222,21 @@ MatrixApp::Connect()
 		[this](const mtx::responses::Login &res, mtx::http::RequestErr err)
 		{
 			if (err) {
+				BString errLog;
+				errLog << "Login failed (status=" << err->status_code
+					<< " error=" << err->error_code
+					<< "): " << err->matrix_error.error.c_str();
+				log_debug(errLog.String());
 				SendError("Error occured during login, please try again.", err,
 					true);
 				fInitStatus = B_ERROR;
 				fConnected = false;
 				return;
 			}
+			BString loginInfo;
+			loginInfo << "Login successful: user_id='"
+				<< client->user_id().to_string().c_str() << "'";
+			log_debug(loginInfo.String());
 			client->set_access_token(res.access_token);
 			fInitStatus = B_OK;
 			fConnected = true;
@@ -202,6 +248,7 @@ MatrixApp::Connect()
 void
 MatrixApp::Disconnect()
 {
+	log_debug("Disconnect: going offline.");
 	fConnected = false;
 	client = nullptr;
 
@@ -218,6 +265,8 @@ MatrixApp::StartLoop()
 	if (!client)
 		return;
 
+	log_debug("StartLoop: sending STATUS_ONLINE + sync message.");
+
 	BMessage status(IM_MESSAGE);
 	status.AddInt32("im_what", IM_OWN_STATUS_SET);
 	status.AddInt32("status", (int32)STATUS_ONLINE);
@@ -229,15 +278,26 @@ MatrixApp::StartLoop()
 	syncStatus.AddString("body", B_TRANSLATE("Synchronizing with Matrix server. Please wait..."));
 	SendMessage(syncStatus);
 
+	BString ownInfo;
+	ownInfo << "Fetching profile for user '"
+		<< client->user_id().to_string().c_str() << "'.";
+	log_debug(ownInfo.String());
+
 	client->get_profile(client->user_id().to_string(),
 		[this](const mtx::responses::Profile &res, mtx::http::RequestErr err)
 		{
 			if (err) {
+				BString errLog;
+				errLog << "Failed fetching own profile (status="
+					<< err->status_code << " error=" << err->error_code
+					<< "): " << err->matrix_error.error.c_str();
+				log_debug(errLog.String());
 				print_error(err, "Failed getting own info after login…");
 				StartLoop();
 				snooze(1000000);
 				return;
 			}
+			log_debug("Profile fetched; sending IM_PROTOCOL_READY.");
 			BMessage ready(IM_MESSAGE);
 			ready.AddInt32("im_what", IM_PROTOCOL_READY);
 			SendMessage(ready);
@@ -451,6 +511,11 @@ initial_sync_handler(const mtx::responses::Sync &res, mtx::http::RequestErr err)
 		return;
 
 	if (err) {
+		BString errLog;
+		errLog << "Initial sync failed (status=" << err->status_code
+			<< " error=" << err->error_code << "): "
+			<< err->matrix_error.error.c_str();
+		log_debug(errLog.String());
 		print_error(err, "Error occured during initial sync. Retrying…");
 		if ((int)err->status_code != 200) {
 			opts.timeout = 0;
@@ -459,6 +524,7 @@ initial_sync_handler(const mtx::responses::Sync &res, mtx::http::RequestErr err)
 		return;
 	}
 
+	log_debug("Initial sync done; starting sync loop.");
 	room_sync(res.rooms);
 	invite_sync(res.rooms.invite);
 
@@ -478,10 +544,23 @@ sync_handler(const mtx::responses::Sync &res, mtx::http::RequestErr err)
 		return;
 
 	if (err) {
+		BString errLog;
+		errLog << "Sync failed (status=" << err->status_code
+			<< " error=" << err->error_code << "): "
+			<< err->matrix_error.error.c_str();
+		log_debug(errLog.String());
 		print_error(err, "Error occured during sync. Retrying…");
 		opts.since = client->next_batch_token();
 		client->sync(opts, &sync_handler);
 		return;
+	}
+
+	{
+		BString syncLog;
+		syncLog << "Sync: joined_rooms=" << res.rooms.join.size()
+			<< " invited_rooms=" << res.rooms.invite.size()
+			<< " left_rooms=" << res.rooms.leave.size();
+		log_debug(syncLog.String());
 	}
 
 	room_sync(res.rooms);
@@ -498,6 +577,12 @@ invite_sync(std::map<std::string, mtx::responses::InvitedRoom> invites)
 {
 	MatrixApp* app = (MatrixApp*)be_app;
 
+	{
+		BString inviteLog;
+		inviteLog << "Invite sync: " << invites.size() << " invitation(s).";
+		log_debug(inviteLog.String());
+	}
+
 	for (std::map<std::string, mtx::responses::InvitedRoom>::iterator iter
 				= invites.begin();
 			iter != invites.end();
@@ -505,6 +590,11 @@ invite_sync(std::map<std::string, mtx::responses::InvitedRoom> invites)
 	{
 		const char* chat_id = iter->first.c_str();
 		mtx::responses::InvitedRoom room = iter->second;
+
+		BString inviteMsgLog;
+		inviteMsgLog << "Sending IM_ROOM_INVITE_RECEIVED for room '"
+			<< chat_id << "'.";
+		log_debug(inviteMsgLog.String());
 
 		BMessage inviteMsg(IM_MESSAGE);
 		inviteMsg.AddInt32("im_what", IM_ROOM_INVITE_RECEIVED);
@@ -534,6 +624,8 @@ void
 room_sync(mtx::responses::Rooms rooms)
 {
 	MatrixApp* app = (MatrixApp*)be_app;
+
+	log_debug("Handling joined rooms from sync.");
 
 	std::map<std::string, mtx::responses::JoinedRoom> joined = rooms.join;
 	for (std::map<std::string, mtx::responses::JoinedRoom>::iterator iter

@@ -5,7 +5,10 @@
 
 #include "MatrixProtocol.h"
 
+#include <iostream>
+
 #include <Catalog.h>
+#include <File.h>
 #include <Messenger.h>
 #include <OS.h>
 #include <Roster.h>
@@ -23,6 +26,27 @@
 #define B_TRANSLATION_CONTEXT "MatrixProtocol"
 
 
+// Verbose logging helper. The protocol add-on lives inside Chat-O-Matic, so
+// anything shown on stdout may be invisible; log to the file as well.
+static void
+log_debug(const BString &message)
+{
+	bigtime_t now = system_time();
+
+	BString line;
+	line.SetToFormat("MatrixProtocol: %11lld %s", now, message.String());
+	line.ReplaceSet("\n", " ");
+	line << "\n";
+
+	BFile logFile("/tmp/chatomatic-matrix.log",
+		B_WRITE_ONLY | B_CREATE_FILE | B_OPEN_AT_END);
+	if (logFile.InitCheck() == B_OK)
+		logFile.Write(line.String(), line.Length());
+
+	std::cerr << line;
+}
+
+
 status_t
 connect_thread(void* data)
 {
@@ -38,11 +62,21 @@ connect_thread(void* data)
 			case MATRIX_ACCOUNT_REGISTERED:
 			{
 				team_id team = (team_id)msg.GetInt64("team_id", -1);
+				BString regLog;
+				regLog << "Received MATRIX_ACCOUNT_REGISTERED: team_id="
+					<< (int32)team << ".";
+				log_debug(regLog.String());
 				protocol->RegisterApp(team);
 				break;
 			}
 			default:
-				protocol->SendMessage(new BMessage(msg));
+				{
+					BString fwdLog;
+					fwdLog.SetToFormat("Forwarding message 0x%x to Chat-O-Matic.",
+						(unsigned)msg.what);
+					log_debug(fwdLog.String());
+					protocol->SendMessage(new BMessage(msg));
+				}
 		}
 	}
 	return B_OK;
@@ -108,8 +142,16 @@ MatrixProtocol::UpdateSettings(BMessage* settings)
 	if (fRecvThread < B_OK) {
 		fRecvThread = spawn_thread(connect_thread,
 			"matrix connections", B_NORMAL_PRIORITY, (void*)this);
-		if (fRecvThread < B_OK)
+		if (fRecvThread < B_OK) {
+			BString errLog;
+			errLog << "Failed to spawn connection thread ("
+				<< (int32)fRecvThread << ").";
+			log_debug(errLog.String());
 			return B_ERROR;
+		}
+		BString threadLog;
+		threadLog << "Connection thread spawned: id=" << (int32)fRecvThread << ".";
+		log_debug(threadLog.String());
 	}
 
 	settings->AddInt64("thread_id", fRecvThread);
@@ -133,9 +175,11 @@ MatrixProtocol::Process(BMessage* msg)
 			int32 status = msg->GetInt32("status", -1);
 			switch (status) {
 				case STATUS_ONLINE:
+					log_debug("Status change: STATUS_ONLINE.");
 					_GoOnline();
 					break;
 				case STATUS_OFFLINE:
+					log_debug("Status change: STATUS_OFFLINE.");
 					_GoOffline();
 					break;
 				default:
@@ -194,6 +238,9 @@ MatrixProtocol::RegisterApp(team_id team)
 	fAppTeam = team;
 	delete fAppMessenger;
 	fAppMessenger = new BMessenger(NULL, team);
+	BString regLog;
+	regLog << "MatrixApp registered: team_id=" << (int32)team << ".";
+	log_debug(regLog.String());
 }
 
 
@@ -212,9 +259,17 @@ MatrixProtocol::_StartApp()
 	BMessage* start = new BMessage(*fSettings);
 	start->what = MATRIX_REGISTER_ACCOUNT;
 
+	log_debug("Launching MatrixApp…");
 	BRoster roster;
-	if (roster.Launch(MATRIX_SIGNATURE, start) == B_OK)
+	status_t launchStatus = roster.Launch(MATRIX_SIGNATURE, start);
+	if (launchStatus == B_OK) {
 		snooze(100000);
+	} else {
+		BString errLog;
+		errLog << "Failed to launch MatrixApp (status="
+			<< (int32)launchStatus << ").";
+		log_debug(errLog.String());
+	}
 }
 
 
