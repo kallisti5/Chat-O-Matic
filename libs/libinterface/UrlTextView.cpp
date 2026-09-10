@@ -87,7 +87,7 @@ UrlTextView::MessageReceived(BMessage* msg)
 			query.ReplaceAll("%q%", BUrl::UrlEncode(BString(buffer)));
 
 			// Send query
-			BUrl url(query.String());
+			BUrl url(query.String(), true);
 			if (url.IsValid())
 				url.OpenWithPreferredApplication(true);
 			break;
@@ -269,7 +269,7 @@ UrlTextView::UrlAt(BPoint where)
 	int32 end;
 	if (_FindUrlString(line, &start, &end, offset) == true) {
 		line.CopyCharsInto(urlStr, start, end - start);
-		url.SetUrlString(urlStr);
+		url.SetUrlString(urlStr, true);
 	}
 	return url;
 }
