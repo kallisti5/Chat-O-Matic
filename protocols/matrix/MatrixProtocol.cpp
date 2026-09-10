@@ -7,6 +7,7 @@
 
 #include <Catalog.h>
 #include <Messenger.h>
+#include <OS.h>
 #include <Roster.h>
 
 #include <libinterface/BitmapUtils.h>
@@ -27,15 +28,24 @@ connect_thread(void* data)
 {
 	MatrixProtocol* protocol = (MatrixProtocol*)data;
 	while (true) {
-		BMessage* msg = new BMessage(receive_message());
-		switch (msg->what) {
+		BMessage msg = receive_message();
+		if (msg.what == 0) {
+			snooze(100000);
+			continue;
+		}
+
+		switch (msg.what) {
 			case MATRIX_ACCOUNT_REGISTERED:
-				protocol->RegisterApp((team_id)msg->GetInt64("team_id", -1));
+			{
+				team_id team = (team_id)msg.GetInt64("team_id", -1);
+				protocol->RegisterApp(team);
 				break;
+			}
 			default:
-				protocol->SendMessage(msg);
+				protocol->SendMessage(new BMessage(msg));
 		}
 	}
+	return B_OK;
 }
 
 
@@ -44,18 +54,25 @@ receive_message()
 {
 	thread_id sender;
 	int32 size = receive_data(&sender, NULL, 0);
+	if (size <= 0)
+		return BMessage();
+
 	char buffer[size];
 	receive_data(&sender, buffer, size);
+
 	BMessage temp;
-	temp.Unflatten(buffer);
+	if (temp.Unflatten(buffer) != B_OK)
+		return BMessage();
 	return temp;
 }
 
 
 MatrixProtocol::MatrixProtocol()
 	:
-	fAppMessenger(NULL),
-	fAppTeam(-1)
+	fSettings(NULL),
+	fAppTeam(-1),
+	fRecvThread(-1),
+	fAppMessenger(NULL)
 {
 }
 
@@ -63,6 +80,7 @@ MatrixProtocol::MatrixProtocol()
 MatrixProtocol::~MatrixProtocol()
 {
 	Shutdown();
+	delete fSettings;
 }
 
 
@@ -77,8 +95,9 @@ MatrixProtocol::Init(ChatProtocolMessengerInterface* interface)
 status_t
 MatrixProtocol::Shutdown()
 {
-	_SendMatrixMessage(new BMessage(B_QUIT_REQUESTED));
-	kill_thread(fRecvThread);
+	_GoOffline();
+	if (fRecvThread >= 0)
+		kill_thread(fRecvThread);
 	return B_OK;
 }
 
@@ -86,13 +105,15 @@ MatrixProtocol::Shutdown()
 status_t
 MatrixProtocol::UpdateSettings(BMessage* settings)
 {
-	fRecvThread = spawn_thread(connect_thread, "moon_w_blackjack_and_hookers",
-		B_NORMAL_PRIORITY, (void*)this);
-
-	if (fRecvThread < B_OK)
-		return B_ERROR;
+	if (fRecvThread < B_OK) {
+		fRecvThread = spawn_thread(connect_thread,
+			"matrix connections", B_NORMAL_PRIORITY, (void*)this);
+		if (fRecvThread < B_OK)
+			return B_ERROR;
+	}
 
 	settings->AddInt64("thread_id", fRecvThread);
+	delete fSettings;
 	fSettings = new BMessage(*settings);
 	return B_OK;
 }
@@ -101,6 +122,9 @@ MatrixProtocol::UpdateSettings(BMessage* settings)
 status_t
 MatrixProtocol::Process(BMessage* msg)
 {
+	if (msg->what != IM_MESSAGE)
+		return B_ERROR;
+
 	int32 im_what = msg->GetInt32("im_what", -1);
 
 	switch (im_what) {
@@ -109,26 +133,18 @@ MatrixProtocol::Process(BMessage* msg)
 			int32 status = msg->GetInt32("status", -1);
 			switch (status) {
 				case STATUS_ONLINE:
-					resume_thread(fRecvThread);
-					if (fAppMessenger == NULL || fAppMessenger->IsValid() == false)
-						_StartApp();
+					_GoOnline();
 					break;
 				case STATUS_OFFLINE:
-				{
-					_SendMatrixMessage(new BMessage(B_QUIT_REQUESTED));
-					kill_thread(fRecvThread);
-
-					delete fAppMessenger;
-					fAppMessenger = NULL;
-					fAppTeam = -1;
+					_GoOffline();
 					break;
-				}
 				default:
-					_SendMatrixMessage(msg);
+					_SendMatrixMessage(new BMessage(*msg));
 			}
+			break;
 		}
 		default:
-			_SendMatrixMessage(msg);
+			_SendMatrixMessage(new BMessage(*msg));
 	}
 	return B_OK;
 }
@@ -176,6 +192,7 @@ MatrixProtocol::RegisterApp(team_id team)
 	if (team < 0)
 		return;
 	fAppTeam = team;
+	delete fAppMessenger;
 	fAppMessenger = new BMessenger(NULL, team);
 }
 
@@ -198,6 +215,36 @@ MatrixProtocol::_StartApp()
 	BRoster roster;
 	if (roster.Launch(MATRIX_SIGNATURE, start) == B_OK)
 		snooze(100000);
+}
+
+
+void
+MatrixProtocol::_GoOnline()
+{
+	// Make sure the connection thread is alive, respawning it if
+	// it was killed when going offline before.
+	thread_info info;
+	if (fRecvThread < B_OK || get_thread_info(fRecvThread, &info) != B_OK) {
+		fRecvThread = spawn_thread(connect_thread, "matrix connections",
+			B_NORMAL_PRIORITY, (void*)this);
+	}
+	if (fRecvThread >= B_OK)
+		resume_thread(fRecvThread);
+
+	if (fAppMessenger == NULL || fAppMessenger->IsValid() == false)
+		_StartApp();
+}
+
+
+void
+MatrixProtocol::_GoOffline()
+{
+	if (fAppMessenger != NULL && fAppMessenger->IsValid())
+		fAppMessenger->SendMessage(new BMessage(B_QUIT_REQUESTED));
+
+	delete fAppMessenger;
+	fAppMessenger = NULL;
+	fAppTeam = -1;
 }
 
 

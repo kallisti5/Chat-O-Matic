@@ -54,6 +54,8 @@ public:
 private:
 			void		_SendMatrixMessage(BMessage* msg);
 			void		_StartApp();
+			void		_GoOnline();
+			void		_GoOffline();
 
 			// GUI templates
 			BMessage	_AccountTemplate();

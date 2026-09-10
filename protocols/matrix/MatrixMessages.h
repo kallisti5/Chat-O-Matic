@@ -14,7 +14,6 @@ enum matrix_message {
 		Requires:	Account template, int64 thread_id */
 	MATRIX_REGISTER_ACCOUNT					= 'MXra',
 
-
 	/*! Inform the protocol of app team id	→Protocol
 		Requires:	int64 team_id */
 	MATRIX_ACCOUNT_REGISTERED				= 'MXar'
