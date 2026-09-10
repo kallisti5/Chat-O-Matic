@@ -44,8 +44,10 @@ ProtocolManager::Init(BDirectory dir, BHandler* target)
 
 		// Load protocol addon
 		image_id id = load_add_on(path.Path());
-		if (id < 0)
+		if (id < 0) {
+			printf("load_add_on failed for '%s': %s\n", path.Path(), strerror(id));
 			continue;
+		}
 
 		// Refuse to load add-on under some circumstances…
 		ChatProtocolAddOn* addOn = new ChatProtocolAddOn(id, path.Path());
