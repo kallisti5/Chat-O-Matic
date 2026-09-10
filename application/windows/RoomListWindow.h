@@ -15,7 +15,7 @@ class BColumnListView;
 class RoomListRow;
 
 
-typedef KeyMap<int64, BObjectList<RoomListRow>*> RowMap;
+typedef KeyMap<int64, BObjectList<RoomListRow, true>*> RowMap;
 
 
 class RoomListWindow : public BWindow {

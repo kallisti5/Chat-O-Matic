@@ -52,7 +52,7 @@ RoomListWindow::~RoomListWindow()
 	_EmptyList();
 
 	for (int i = 0; i < fRows.CountItems(); i++) {
-		BObjectList<RoomListRow>* list = fRows.ValueAt(i);
+		BObjectList<RoomListRow, true>* list = fRows.ValueAt(i);
 		if (list != NULL)
 			delete list;
 	}
@@ -91,9 +91,9 @@ RoomListWindow::MessageReceived(BMessage* msg)
 				RoomListRow* row = new RoomListRow(msg);
 
 				bool fnd = false;
-				BObjectList<RoomListRow>* list = fRows.ValueFor(instance, &fnd);
+				BObjectList<RoomListRow, true>* list = fRows.ValueFor(instance, &fnd);
 				if (fnd == false || list == NULL) {
-					list = new BObjectList<RoomListRow>(20, true);
+					list = new BObjectList<RoomListRow, true>(20);
 					fRows.AddItem(instance, list);
 				}
 				list->AddItem(row);
@@ -107,13 +107,13 @@ RoomListWindow::MessageReceived(BMessage* msg)
 		{
 			_EmptyList();
 			for (int i = 0; i < fRows.CountItems(); i++) {
-				BObjectList<RoomListRow>* list = fRows.ValueAt(i);
-				if (list != NULL)
-					for (int j = 0; j < list->CountItems(); j++) {
-						RoomListRow* row = list->ItemAt(j);
-						if (row != NULL)
-							fListView->AddRow(row);
-					}
+			BObjectList<RoomListRow, true>* list = fRows.ValueAt(i);
+			if (list != NULL)
+				for (int j = 0; j < list->CountItems(); j++) {
+					RoomListRow* row = list->ItemAt(j);
+					if (row != NULL)
+						fListView->AddRow(row);
+				}
 			}
 			fAccount = -1;
 			break;
@@ -124,7 +124,7 @@ RoomListWindow::MessageReceived(BMessage* msg)
 			int64 instance;
 			if (msg->FindInt64("instance", &instance) == B_OK) {
 				bool fnd = false;
-				BObjectList<RoomListRow>* list = fRows.ValueFor(instance, &fnd);
+				BObjectList<RoomListRow, true>* list = fRows.ValueFor(instance, &fnd);
 				if (fnd == false || list == NULL)
 					break;
 
