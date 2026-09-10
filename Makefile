@@ -20,7 +20,7 @@ ifneq ($(shell uname -m), x86_gcc2)
 	$(MAKE) -f protocols/purple/Makefile
 endif
 
-protocols: irc xmpp purple
+protocols: irc xmpp matrix purple
 
 all: libs protocols app
 
