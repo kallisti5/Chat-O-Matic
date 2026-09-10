@@ -13,8 +13,10 @@
 #include <Button.h>
 #include <Catalog.h>
 #include <ControlLook.h>
+#include <Font.h>
 #include <LayoutBuilder.h>
 #include <ListView.h>
+#include <MenuItem.h>
 #include <PopUpMenu.h>
 #include <ScrollView.h>
 
@@ -39,6 +41,29 @@ const uint32 kEditAccount	= 'edac';
 const uint32 kDelAccount	= 'dlac';
 const uint32 kToggleAccount	= 'tgac';
 const uint32 kSelect		= 'selt';
+
+
+class SectionHeaderItem : public BMenuItem {
+public:
+					SectionHeaderItem(const char* label)
+						: BMenuItem(label, NULL) {}
+
+	virtual void	DrawContent()
+	{
+		BFont font;
+		Menu()->GetFont(&font);
+		BFont prevFont(font);
+		font.SetFace(B_BOLD_FACE);
+		Menu()->SetFont(&font);
+		BMenuItem::DrawContent();
+		Menu()->SetFont(&prevFont);
+	}
+
+	virtual status_t Invoke(BMessage* = NULL)
+	{
+		return B_OK;
+	}
+};
 
 
 static int
@@ -91,9 +116,13 @@ AccountsWindow::AccountsWindow()
 			accountItems.AddItem(item);
 	}
 
+	fProtosMenu->AddItem(new SectionHeaderItem(B_TRANSLATE("Native")));
+
 	for (int i = 0; i < accountItems.CountItems(); i++)
 		fProtosMenu->AddItem(accountItems.ItemAt(i));
+
 	fProtosMenu->AddSeparatorItem();
+	fProtosMenu->AddItem(new SectionHeaderItem(B_TRANSLATE("libpurple")));
 
 	for (int i = 0; i < purpleItems.CountItems(); i++)
 		fProtosMenu->AddItem(purpleItems.ItemAt(i));
